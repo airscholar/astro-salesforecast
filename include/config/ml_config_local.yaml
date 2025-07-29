@@ -1,0 +1,103 @@
+# MLflow Configuration - Local Mode
+mlflow:
+  tracking_uri: "file:///tmp/mlruns"
+  experiment_name: "sales_forecasting"
+  registry_name: "sales_forecast_models"
+  
+# Model Configuration
+models:
+  xgboost:
+    params:
+      n_estimators: 100
+      max_depth: 6
+      learning_rate: 0.1
+      objective: "reg:squarederror"
+      random_state: 42
+  
+  lightgbm:
+    params:
+      num_leaves: 31
+      learning_rate: 0.05
+      n_estimators: 100
+      objective: "regression"
+      random_state: 42
+  
+  prophet:
+    params:
+      seasonality_mode: "multiplicative"
+      changepoint_prior_scale: 0.05
+      seasonality_prior_scale: 10
+
+# Feature Engineering
+features:
+  date_features:
+    - "year"
+    - "month"
+    - "day"
+    - "dayofweek"
+    - "quarter"
+    - "weekofyear"
+    - "is_weekend"
+    - "is_holiday"
+  
+  lag_features:
+    - 1
+    - 2
+    - 3
+    - 7
+    - 14
+    - 21
+    - 30
+  
+  rolling_features:
+    windows: [3, 7, 14, 21, 30]
+    functions: ["mean", "std", "min", "max", "median"]
+
+# Data Validation
+validation:
+  required_columns:
+    - "date"
+    - "sales"
+    - "store_id"
+    - "product_id"
+  
+  data_types:
+    date: "datetime64[ns]"
+    sales: "float64"
+    store_id: "object"
+    product_id: "object"
+  
+  value_ranges:
+    sales:
+      min: 0
+      max: 1000000
+
+# Training Configuration
+training:
+  test_size: 0.2
+  validation_size: 0.1
+  cv_folds: 5
+  metrics:
+    - "rmse"
+    - "mae"
+    - "mape"
+    - "r2"
+
+# Inference Configuration
+inference:
+  batch_size: 1000
+  prediction_horizon: 30  # days
+  confidence_intervals: [0.8, 0.95]
+
+# Monitoring Configuration
+monitoring:
+  drift_detection:
+    enabled: true
+    method: "kolmogorov_smirnov"
+    threshold: 0.1
+  
+  performance_monitoring:
+    enabled: true
+    alert_threshold:
+      rmse: 1000
+      mape: 0.2
