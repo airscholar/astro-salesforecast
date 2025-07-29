@@ -8,6 +8,7 @@ services:
     platform: linux/arm64
     command: >
       bash -c "pip install mlflow==2.9.2 psycopg2-binary boto3 && 
+               export MLFLOW_S3_ENDPOINT_URL=http://minio:9000 &&
                mlflow server --host 0.0.0.0 --port 5001 
                --backend-store-uri postgresql://mlflow:mlflow@mlflow-db:5432/mlflow 
                --default-artifact-root s3://mlflow-artifacts/ 
@@ -22,6 +23,9 @@ services:
     depends_on:
       - mlflow-db
       - minio
+    networks:
+      - airflow
+      - default
     restart: unless-stopped
 
   # PostgreSQL for MLflow
@@ -38,6 +42,9 @@ services:
       test: ['CMD', 'pg_isready', '-U', 'mlflow']
       interval: 5s
       retries: 5
+    networks:
+      - airflow
+      - default
     restart: unless-stopped
 
   # MinIO for S3-compatible storage
@@ -58,6 +65,9 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - airflow
+      - default
     restart: unless-stopped
 
   # Create MLflow bucket in MinIO
@@ -119,3 +129,10 @@ services:
 volumes:
   mlflow-db-volume:
   minio-data:
+
+networks:
+  airflow:
+    external: true
+    name: astro-sales-forecast_eaa509_airflow
+  default:
+    name: astro-sales-forecast_eaa509_default

@@ -12,6 +12,7 @@ import numpy as np
 from datetime import datetime
 import logging
 import joblib
+from .service_discovery import get_mlflow_endpoint, get_minio_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -22,27 +23,32 @@ class MLflowManager:
             self.config = yaml.safe_load(f)
         
         mlflow_config = self.config['mlflow']
-        # Use environment variable if available, otherwise use config value
-        config_uri = mlflow_config['tracking_uri']
-        if config_uri.startswith('${') and config_uri.endswith('}'):
-            # Extract env var name and default value
-            env_part = config_uri[2:-1]
-            if ':-' in env_part:
-                env_name, default_value = env_part.split(':-', 1)
-                self.tracking_uri = os.getenv(env_name, default_value)
-            else:
-                self.tracking_uri = os.getenv(env_part, 'http://mlflow:5001')
-        else:
-            self.tracking_uri = os.getenv('MLFLOW_TRACKING_URI', config_uri)
+        # Use service discovery to get tracking URI
+        self.tracking_uri = get_mlflow_endpoint()
         
         self.experiment_name = mlflow_config['experiment_name']
         self.registry_name = mlflow_config['registry_name']
         
         mlflow.set_tracking_uri(self.tracking_uri)
-        mlflow.set_experiment(self.experiment_name)
         
-        # Configure S3 endpoint for MinIO
-        os.environ['MLFLOW_S3_ENDPOINT_URL'] = os.getenv('MLFLOW_S3_ENDPOINT_URL', 'http://minio:9000')
+        # Try to create experiment, with fallback
+        try:
+            mlflow.set_experiment(self.experiment_name)
+        except Exception as e:
+            logger.warning(f"Failed to set experiment {self.experiment_name}: {e}")
+            # Try with localhost if initial connection failed
+            if 'mlflow' in self.tracking_uri:
+                self.tracking_uri = "http://localhost:5001"
+                mlflow.set_tracking_uri(self.tracking_uri)
+                os.environ['MLFLOW_TRACKING_URI'] = self.tracking_uri
+                logger.info(f"Retrying with localhost: {self.tracking_uri}")
+                try:
+                    mlflow.set_experiment(self.experiment_name)
+                except Exception as e2:
+                    logger.error(f"Failed to connect to MLflow: {e2}")
+        
+        # Configure S3 endpoint for MinIO using service discovery
+        os.environ['MLFLOW_S3_ENDPOINT_URL'] = get_minio_endpoint()
         os.environ['AWS_ACCESS_KEY_ID'] = os.getenv('AWS_ACCESS_KEY_ID', 'minioadmin')
         os.environ['AWS_SECRET_ACCESS_KEY'] = os.getenv('AWS_SECRET_ACCESS_KEY', 'minioadmin')
         

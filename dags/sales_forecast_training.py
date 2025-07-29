@@ -37,7 +37,7 @@ def extract_data(**context):
     # For training, generate 3 years of historical data for better patterns
     generator = RealisticSalesDataGenerator(
         start_date="2021-01-01",
-        end_date="2023-12-31"
+        end_date="2021-12-31"
     )
     
     print("Generating realistic sales data...")
