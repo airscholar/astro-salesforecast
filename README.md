@@ -159,9 +159,3 @@ docker-compose -f docker-compose.override.yml logs streamlit
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 Acknowledgments
-
-- Built on the Astronomer platform for enterprise-grade Airflow
-- Inspired by modern MLOps best practices
-- Designed for educational and production use
