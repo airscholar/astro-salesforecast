@@ -18,47 +18,22 @@ A production-ready MLOps platform for sales forecasting that demonstrates modern
 
 ### Technology Stack
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|  
-| **Orchestration** | Astronomer (Airflow 2.10+) | Workflow automation and scheduling |
-| **ML Tracking** | MLflow 2.9+ | Experiment tracking and model registry |
-| **Storage** | MinIO | S3-compatible artifact storage |
+| Component | Technology                 | Purpose |
+|-----------|----------------------------|---------|  
+| **Orchestration** | Astronomer (Airflow 3.0+)  | Workflow automation and scheduling |
+| **ML Tracking** | MLflow 2.9+                | Experiment tracking and model registry |
+| **Storage** | MinIO                      | S3-compatible artifact storage |
 | **ML Models** | XGBoost, LightGBM, Prophet | Ensemble forecasting |
 | **Visualization** | Matplotlib, Seaborn, Plotly | Model analysis and insights |
-| **Inference UI** | Streamlit | Interactive prediction interface |
-| **Containerization** | Docker & Docker Compose | Environment consistency |
-
-### Project Structure
-
-```
-Astro-SalesForecast/
-├── dags/                       # Airflow DAGs
-│   └── sales_forecast_training.py  # Main training pipeline
-├── include/                    # Core ML code
-│   ├── ml_models/             # Model implementations
-│   │   ├── train_models.py    # Training orchestration
-│   │   ├── ensemble_model.py  # Ensemble implementation
-│   │   └── model_visualization.py  # Advanced visualizations
-│   ├── feature_engineering/   # Feature pipeline
-│   ├── data_validation/       # Data quality checks
-│   └── utils/                 # Utilities and helpers
-├── ui/                        # Streamlit interface
-│   ├── inference_app.py       # Main app
-│   └── utils/                 # Model loading utilities
-├── docs/                      # Documentation
-│   ├── ARCHITECTURE.md        # Detailed architecture
-│   └── *.png                  # Architecture diagrams
-├── Dockerfile                 # Astronomer runtime
-├── requirements.txt           # Python dependencies
-└── docker-compose.override.yml # Additional services
-```
+| **Inference UI** | Streamlit                  | Interactive prediction interface |
+| **Containerization** | Docker & Docker Compose    | Environment consistency |
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - Docker Desktop installed and running
-- Astronomer CLI (`brew install astro` on macOS)
+- Astronomer CLI (`brew install astro` on macOS, other OS, you can follow the [instructions here](https://www.astronomer.io/docs/astro/cli/install-cli/))
 - 8GB+ RAM available for Docker
 - Ports 8080, 8501, 5001, 9000, 9001 available
 
@@ -66,11 +41,8 @@ Astro-SalesForecast/
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/airscholar/astro-salesforecast.git
 cd Astro-SalesForecast
-
-# Initialize Astronomer project (if not already done)
-astro dev init
 ```
 
 ### 2. Start All Services
@@ -112,7 +84,6 @@ This will start:
 ### Model Training
 - **XGBoost**: Gradient boosting for non-linear patterns
 - **LightGBM**: Fast training with categorical support
-- **Prophet**: Time series specific modeling
 - **Ensemble**: Optimized weighted average of all models
 - Hyperparameter tuning with Optuna
 
@@ -151,26 +122,6 @@ Input Data → Feature Engineering → Model Prediction → Visualization → Ex
 - **Model Accuracy**: MAPE < 5% on test data
 - **Ensemble Performance**: 15-20% improvement over individual models
 
-## 🛠️ Development
-
-### Adding New Models
-
-1. Implement model class in `include/ml_models/`
-2. Add to training pipeline configuration
-3. Update ensemble weight calculation
-4. Add model-specific visualizations
-
-### Customizing Features
-
-1. Modify `include/feature_engineering/feature_pipeline.py`
-2. Update configuration in `include/config/ml_config.yaml`
-3. Retrain models with new features
-
-### Extending Visualizations
-
-1. Add visualization functions to `model_visualization.py`
-2. Update training DAG to generate new plots
-3. Add to Streamlit UI if needed
 
 ## 🐛 Troubleshooting
 
