@@ -249,21 +249,65 @@ class ModelTrainer:
             columns={date_col: 'ds', target_col: 'y'}
         )
         
-        # Initialize Prophet with config parameters
-        model = Prophet(**self.model_config['prophet']['params'])
+        # Remove any NaN values
+        prophet_train = prophet_train.dropna()
         
-        # Add additional regressors if available
-        numeric_cols = train_df.select_dtypes(include=[np.number]).columns
-        regressor_cols = [col for col in numeric_cols if col not in [target_col, 'year', 'month', 'day']]
+        # Ensure dates are sorted
+        prophet_train = prophet_train.sort_values('ds')
         
-        for col in regressor_cols[:10]:  # Limit to 10 regressors
-            model.add_regressor(col)
-            prophet_train[col] = train_df[col]
+        # Initialize Prophet with simplified parameters to avoid memory issues
+        prophet_params = self.model_config['prophet']['params'].copy()
         
-        model.fit(prophet_train)
+        # Override some parameters for stability
+        prophet_params.update({
+            'stan_backend': 'CMDSTANPY',  # Use cmdstanpy backend
+            'mcmc_samples': 0,  # Disable MCMC for speed and stability
+            'uncertainty_samples': 100,  # Reduce uncertainty samples
+        })
         
-        self.models['prophet'] = model
-        return model
+        try:
+            model = Prophet(**prophet_params)
+            
+            # Add only essential regressors to reduce complexity
+            numeric_cols = train_df.select_dtypes(include=[np.number]).columns
+            regressor_cols = [col for col in numeric_cols if col not in [target_col, 'year', 'month', 'day', 'week', 'quarter']]
+            
+            # Limit to top 5 most important regressors based on variance
+            if len(regressor_cols) > 5:
+                variances = {col: train_df[col].var() for col in regressor_cols}
+                regressor_cols = sorted(variances.keys(), key=lambda x: variances[x], reverse=True)[:5]
+            
+            for col in regressor_cols:
+                if train_df[col].std() > 0:  # Only add regressors with variance
+                    model.add_regressor(col)
+                    prophet_train[col] = train_df[col]
+            
+            # Fit the model with error handling
+            model.fit(prophet_train)
+            
+            self.models['prophet'] = model
+            return model
+            
+        except Exception as e:
+            logger.error(f"Prophet training failed with parameters: {e}")
+            # Try with minimal configuration
+            logger.info("Retrying Prophet with minimal configuration...")
+            
+            model = Prophet(
+                yearly_seasonality=True,
+                weekly_seasonality=True,
+                daily_seasonality=False,
+                changepoint_prior_scale=0.05,
+                seasonality_prior_scale=10.0,
+                uncertainty_samples=50,
+                mcmc_samples=0
+            )
+            
+            # Train without any additional regressors
+            model.fit(prophet_train[['ds', 'y']])
+            
+            self.models['prophet'] = model
+            return model
     
     def train_all_models(self, train_df: pd.DataFrame, val_df: pd.DataFrame,
                         test_df: pd.DataFrame, target_col: str = 'sales',
@@ -339,32 +383,41 @@ class ModelTrainer:
                 'predictions': lgb_pred
             }
             
-            # Skip Prophet for now due to compatibility issues
-            # Train Prophet
-            try:
-                prophet_model = self.train_prophet(train_df, val_df)
-                
-                # Create future dataframe for Prophet predictions
-                future = test_df[['date']].rename(columns={'date': 'ds'})
-                regressor_cols = [col for col in prophet_model.extra_regressors.keys()]
-                for col in regressor_cols:
-                    future[col] = test_df[col]
-                
-                prophet_pred = prophet_model.predict(future)['yhat'].values
-                prophet_metrics = self.calculate_metrics(y_test, prophet_pred)
-                
-                self.mlflow_manager.log_metrics({f"prophet_{k}": v for k, v in prophet_metrics.items()})
-                
-                results['prophet'] = {
-                    'model': prophet_model,
-                    'metrics': prophet_metrics,
-                    'predictions': prophet_pred
-                }
-                
-                # Ensemble predictions with all three models
-                ensemble_pred = (xgb_pred + lgb_pred + prophet_pred) / 3
-            except Exception as e:
-                logger.warning(f"Prophet training failed: {e}. Using weighted ensemble of XGBoost and LightGBM.")
+            # Train Prophet if enabled
+            prophet_enabled = self.model_config.get('prophet', {}).get('enabled', True)
+            
+            if prophet_enabled:
+                try:
+                    prophet_model = self.train_prophet(train_df, val_df)
+                    
+                    # Create future dataframe for Prophet predictions
+                    future = test_df[['date']].rename(columns={'date': 'ds'})
+                    
+                    # Add regressors if they exist
+                    if hasattr(prophet_model, 'extra_regressors') and prophet_model.extra_regressors:
+                        regressor_cols = [col for col in prophet_model.extra_regressors.keys()]
+                        for col in regressor_cols:
+                            if col in test_df.columns:
+                                future[col] = test_df[col]
+                    
+                    prophet_pred = prophet_model.predict(future)['yhat'].values
+                    prophet_metrics = self.calculate_metrics(y_test, prophet_pred)
+                    
+                    self.mlflow_manager.log_metrics({f"prophet_{k}": v for k, v in prophet_metrics.items()})
+                    
+                    results['prophet'] = {
+                        'model': prophet_model,
+                        'metrics': prophet_metrics,
+                        'predictions': prophet_pred
+                    }
+                    
+                    # Ensemble predictions with all three models
+                    ensemble_pred = (xgb_pred + lgb_pred + prophet_pred) / 3
+                except Exception as e:
+                    logger.warning(f"Prophet training failed: {e}. Using weighted ensemble of XGBoost and LightGBM.")
+                    prophet_enabled = False
+            
+            if not prophet_enabled:
                 # Weighted ensemble based on individual model performance (using validation R2)
                 xgb_val_pred = xgb_model.predict(X_val)
                 lgb_val_pred = lgb_model.predict(X_val)
@@ -441,6 +494,13 @@ class ModelTrainer:
             for rec in diagnosis['recommendations']:
                 logger.warning(f"- {rec}")
             
+            # Generate visualizations
+            logger.info("Generating model comparison visualizations...")
+            try:
+                self._generate_and_log_visualizations(results, test_df, target_col)
+            except Exception as viz_error:
+                logger.error(f"Visualization generation failed: {viz_error}", exc_info=True)
+            
             # Save artifacts
             self.save_artifacts()
             
@@ -464,7 +524,14 @@ class ModelTrainer:
                 logger.info("Verifying S3 artifact storage...")
                 verification_results = verify_s3_artifacts(
                     run_id=current_run_id,
-                    expected_artifacts=['models/', 'scalers.pkl', 'encoders.pkl', 'feature_cols.pkl']
+                    expected_artifacts=[
+                        'models/', 
+                        'scalers.pkl', 
+                        'encoders.pkl', 
+                        'feature_cols.pkl',
+                        'visualizations/',
+                        'reports/'
+                    ]
                 )
                 log_s3_verification_results(verification_results)
                 
@@ -478,6 +545,163 @@ class ModelTrainer:
             raise e
         
         return results
+    
+    def _generate_and_log_visualizations(self, results: Dict[str, Any], 
+                                       test_df: pd.DataFrame, 
+                                       target_col: str = 'sales') -> None:
+        """Generate and log model comparison visualizations to MLflow"""
+        try:
+            from ml_models.model_visualization import ModelVisualizer
+            import tempfile
+            import os
+            
+            logger.info("Starting visualization generation...")
+            visualizer = ModelVisualizer()
+            
+            # Extract metrics
+            metrics_dict = {}
+            for model_name, model_results in results.items():
+                if 'metrics' in model_results:
+                    metrics_dict[model_name] = model_results['metrics']
+            
+            # Prepare predictions data
+            predictions_dict = {}
+            for model_name, model_results in results.items():
+                if 'predictions' in model_results and model_results['predictions'] is not None:
+                    pred_df = test_df[['date']].copy()
+                    pred_df['prediction'] = model_results['predictions']
+                    predictions_dict[model_name] = pred_df
+            
+            # Extract feature importance if available
+            feature_importance_dict = {}
+            for model_name, model_results in results.items():
+                if model_name in ['xgboost', 'lightgbm'] and 'model' in model_results:
+                    model = model_results['model']
+                    if hasattr(model, 'feature_importances_'):
+                        importance_df = pd.DataFrame({
+                            'feature': self.feature_cols,
+                            'importance': model.feature_importances_
+                        }).sort_values('importance', ascending=False)
+                        feature_importance_dict[model_name] = importance_df
+            
+            # Create temporary directory for visualizations
+            with tempfile.TemporaryDirectory() as temp_dir:
+                logger.info(f"Creating visualizations in temporary directory: {temp_dir}")
+                
+                # Generate all visualizations
+                saved_files = visualizer.create_comprehensive_report(
+                    metrics_dict=metrics_dict,
+                    predictions_dict=predictions_dict,
+                    actual_data=test_df,
+                    feature_importance_dict=feature_importance_dict if feature_importance_dict else None,
+                    save_dir=temp_dir
+                )
+                
+                logger.info(f"Generated {len(saved_files)} visualization files: {list(saved_files.keys())}")
+                
+                # Log each visualization to MLflow
+                for viz_name, file_path in saved_files.items():
+                    if os.path.exists(file_path):
+                        mlflow.log_artifact(file_path, "visualizations")
+                        logger.info(f"Logged visualization: {viz_name} from {file_path}")
+                    else:
+                        logger.warning(f"Visualization file not found: {file_path}")
+                
+                # Also create a combined HTML report
+                self._create_combined_html_report(saved_files, temp_dir)
+                
+                # Log the combined report
+                combined_report = os.path.join(temp_dir, 'model_comparison_report.html')
+                if os.path.exists(combined_report):
+                    mlflow.log_artifact(combined_report, "reports")
+                    logger.info("Logged combined HTML report")
+                    
+        except Exception as e:
+            logger.error(f"Failed to generate visualizations: {e}")
+            # Don't fail the entire training if visualization fails
+    
+    def _create_combined_html_report(self, saved_files: Dict[str, str], save_dir: str) -> None:
+        """Create a combined HTML report with all visualizations"""
+        import os
+        from datetime import datetime
+        
+        html_content = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Model Comparison Report</title>
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    margin: 20px;
+                    background-color: #f5f5f5;
+                }
+                h1, h2 {
+                    color: #333;
+                }
+                .section {
+                    background-color: white;
+                    padding: 20px;
+                    margin-bottom: 20px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+                .timestamp {
+                    color: #666;
+                    font-size: 14px;
+                }
+                iframe {
+                    width: 100%;
+                    height: 800px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    margin-top: 10px;
+                }
+                img {
+                    max-width: 100%;
+                    height: auto;
+                    border-radius: 4px;
+                    margin-top: 10px;
+                }
+            </style>
+        </head>
+        <body>
+            <h1>Sales Forecast Model Comparison Report</h1>
+            <p class="timestamp">Generated on: {timestamp}</p>
+        """
+        
+        html_content = html_content.format(timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        
+        # Add each visualization section
+        sections = [
+            ('metrics_comparison', 'Model Performance Metrics'),
+            ('predictions_comparison', 'Predictions Comparison'),
+            ('residuals_analysis', 'Residuals Analysis'),
+            ('error_distribution', 'Error Distribution'),
+            ('feature_importance', 'Feature Importance'),
+            ('summary', 'Summary Statistics')
+        ]
+        
+        for key, title in sections:
+            if key in saved_files:
+                html_content += f'<div class="section"><h2>{title}</h2>'
+                
+                # All files are now PNG - base64 encode them
+                import base64
+                with open(saved_files[key], 'rb') as f:
+                    img_data = base64.b64encode(f.read()).decode()
+                html_content += f'<img src="data:image/png;base64,{img_data}" alt="{title}">'
+                
+                html_content += '</div>'
+        
+        html_content += """
+        </body>
+        </html>
+        """
+        
+        # Save the combined report
+        with open(os.path.join(save_dir, 'model_comparison_report.html'), 'w') as f:
+            f.write(html_content)
     
     def save_artifacts(self):
         # Save scalers and encoders

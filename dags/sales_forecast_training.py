@@ -245,6 +245,14 @@ def train_models(**context):
             for metric, value in model_results["metrics"].items():
                 print(f"  {metric}: {value:.4f}")
     
+    print("\nVisualization charts have been generated and saved to MLflow/MinIO")
+    print("Charts include:")
+    print("  - Model metrics comparison")
+    print("  - Predictions vs actual values")
+    print("  - Residuals analysis")
+    print("  - Error distribution")
+    print("  - Feature importance comparison")
+    
     # Create serializable results (remove model objects)
     serializable_results = {}
     for model_name, model_results in results.items():

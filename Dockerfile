@@ -5,6 +5,8 @@ USER root
 RUN apt-get update && apt-get install -y \
     build-essential \
     git \
+    gcc \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 USER astro
