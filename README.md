@@ -146,8 +146,6 @@ docker-compose -f docker-compose.override.yml logs streamlit
 ## 📚 Documentation
 
 - [Detailed Architecture](docs/ARCHITECTURE.md)
-- [API Documentation](docs/API.md)
-- [Model Documentation](docs/MODELS.md)
 - [Astronomer Docs](https://www.astronomer.io/docs/)
 
 ## 🤝 Contributing
